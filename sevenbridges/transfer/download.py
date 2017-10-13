@@ -1,82 +1,131 @@
+import hashlib
+import io
 import os
 import threading
-import requests
-import math
 import time
-import hashlib
+
+import requests
+import six
+
+from sevenbridges.decorators import retry
 from sevenbridges.errors import SbgError
-from sevenbridges.transfer.utils import Chunk, PartSize, Progress, \
-    TransferState
+from sevenbridges.http.client import generate_session
+from sevenbridges.models.enums import PartSize, TransferState
+from sevenbridges.transfer.utils import Part, Progress, total_parts
 
 
-def _download_chunk(file_path, session, url, retry, timeout, start_byte,
-                    end_byte):
+def _download_part(path, session, url, retry, timeout, start_byte, end_byte):
+    """
+    Downloads a single part.
+    :param path: File path.
+    :param session: Requests session.
+    :param url: Url of the resource.
+    :param retry: Number of times to retry on error.
+    :param timeout: Session timeout.
+    :param start_byte: Start byte of the part.
+    :param end_byte: End byte of the part.
+    :return:
+    """
     try:
-        fp = os.open(file_path, os.O_CREAT | os.O_WRONLY)
+        fp = os.open(path, os.O_CREAT | os.O_WRONLY)
     except IOError:
-        raise SbgError('Unable to open file %s' % file_path)
+        raise SbgError('Unable to open file %s' % path)
 
+    # Prepare range headers.
     headers = {}
     if end_byte is not None:
         headers['Range'] = 'bytes=%d-%d' % (int(start_byte), int(end_byte))
 
+    cause = None
+
+    # Retry
     for retry in range(retry):
         try:
             response = session.get(
                 url, headers=headers, timeout=timeout, stream=True
             )
-            chunk_size = response.headers.get('Content-Length')
+            response.raise_for_status()
+            part_size = response.headers.get('Content-Length')
             os.lseek(fp, start_byte, os.SEEK_SET)
-            for chunk in response.iter_content(32 * PartSize.KB):
-                os.write(fp, chunk)
+            for part in response.iter_content(32 * PartSize.KB):
+                os.write(fp, part)
             os.close(fp)
-        except requests.RequestException:
+        except requests.HTTPError as e:
+            cause = e
+            time.sleep(2 ** retry)
+            continue
+        except requests.RequestException as e:
+            cause = e
             time.sleep(2 ** retry)
             continue
         else:
-            return Chunk(start=start_byte, size=float(chunk_size))
+            return Part(start=start_byte, size=float(part_size))
 
     else:
         os.close(fp)
-        error = SbgError('Failed to download file after %s attempts.' % retry)
-        raise error
+        raise SbgError('Failed to download file after {} attempts.'
+                       ' Response: {}'.format(retry, six.text_type(cause)))
 
 
-class ChunkedFile(object):
-    def __init__(self, file_path, session, url, file_size, chunk_size, retry,
+def _get_content_length(session, url, timeout):
+    try:
+        response = session.get(url, timeout=timeout, stream=True)
+    except requests.RequestException as e:
+        raise SbgError(str(e))
+
+    file_size = response.headers.get('Content-Length', None)
+    if file_size is None:
+        raise SbgError('Server did not provide Content-Length Headers!')
+
+    return file_size
+
+
+class DPartedFile(object):
+    def __init__(self, file_path, session, url, file_size, part_size, retry,
                  timeout,
                  pool):
+        """
+        Emulates the partitioned file. Uses the download pool attached to the
+        api session to download file parts.
+        :param file_path: Full path to the new file.
+        :param session: Requests session.
+        :param url: Resource url.
+        :param file_size: Resource file size.
+        :param part_size: Part size.
+        :param retry: Number of times to retry on error.
+        :param timeout: Session timeout.
+        :param pool: Download pool.
+        """
         self.url = url
         self.file_path = file_path
         self.session = session
         self.file_size = file_size
-        self.chunk_size = chunk_size
+        self.part_size = part_size
         self.retry = retry
         self.timeout = timeout
         self.submitted = 0
         self.total_submitted = 0
-        self.total = self.total_chunks()
+        self.total = total_parts(self.file_size, self.part_size)
         self.pool = pool
-        self.chunks = self.chunk()
+        self.parts = self.get_parts()
 
     def submit(self):
+        """
+        Partitions the file into chunks and submits them into group of 4
+        for download on the api download pool.
+        """
         futures = []
         while self.submitted < 4 and not self.done():
-            chunk = self.chunks.pop(0)
+            part = self.parts.pop(0)
             futures.append(
                 self.pool.submit(
-                    _download_chunk, self.file_path, self.session, self.url,
-                    self.retry, self.timeout, *chunk)
+                    _download_part, self.file_path, self.session, self.url,
+                    self.retry, self.timeout, *part)
             )
             self.submitted += 1
             self.total_submitted += 1
 
         return futures
-
-    def total_chunks(self):
-        if self.file_size < self.chunk_size:
-            return 1
-        return int(math.ceil(self.file_size / self.chunk_size))
 
     def done(self):
         return self.total_submitted == self.total
@@ -90,55 +139,61 @@ class ChunkedFile(object):
             futures.extend(self.submit())
             yield future.result()
 
-    def chunk(self):
-        chunks = []
+    def get_parts(self):
+        """
+        Partitions the file and saves the part information in memory.
+        """
+        parts = []
         start_b = 0
         end_byte = start_b + PartSize.DOWNLOAD_MINIMUM_PART_SIZE - 1
         for i in range(self.total):
-            chunks.append([start_b, end_byte])
+            parts.append([start_b, end_byte])
             start_b = end_byte + 1
             end_byte = start_b + PartSize.DOWNLOAD_MINIMUM_PART_SIZE - 1
-        return chunks
+        return parts
 
 
-# noinspection PyCallingNonCallable
+# noinspection PyCallingNonCallable,PyTypeChecker,PyProtectedMember
 class Download(threading.Thread):
-    def __init__(self, url=None, file_path=None, retry=5, timeout=10,
-                 chunk_size=None, api=None):
+    def __init__(self, url, file_path,
+                 part_size=PartSize.DOWNLOAD_MINIMUM_PART_SIZE, retry_count=5,
+                 timeout=60, api=None):
         """
-        File downloader.
+        File multipart downloader.
         :param url: URL of the file.
         :param file_path: Local file path.
-        :param retry: Retry count.
+        :param retry_count: Number of times to retry on error.
         :param timeout: Connection timeout in seconds.
-        :param chunk_size: Size of the chunks in bytes.
-        :param api: sbApi instance.
+        :param part_size: Size of the parts in bytes.
+        :param api: Api instance.
         """
         threading.Thread.__init__(self)
-        if not url:
-            raise SbgError('Url must be supplied.')
-        if not file_path:
-            raise SbgError('File path must be supplied.')
+        self.daemon = True
 
         if api is None:
-            raise SbgError('Api instance not supplied.')
+            raise SbgError('Api instance missing.')
 
-        if chunk_size and chunk_size < PartSize.MINIMUM_PART_SIZE:
+        if part_size and part_size < PartSize.DOWNLOAD_MINIMUM_PART_SIZE:
+            self._status = TransferState.FAILED
             raise SbgError(
-                message='Chunk size is too small! Minimum chunk size is %s'
-                        % PartSize.MINIMUM_PART_SIZE
+                'Part size is too small! Minimum get_parts size is {}'.format(
+                    PartSize.DOWNLOAD_MINIMUM_PART_SIZE)
             )
-        self._session = requests.Session()
+
+        # initializes the session
+
         self.url = url
         self._file_path = file_path
+
+        # append unique suffix to the file
         self._temp_file = self._file_path + '.' + hashlib.sha1(
             self._file_path.encode('utf-8')).hexdigest()[:10]
-        self._retry = retry
+        self._retry_count = retry_count
         self._timeout = timeout
-        if chunk_size:
-            self._chunk_size = chunk_size
+        if part_size:
+            self._part_size = part_size
         else:
-            self._chunk_size = PartSize.DOWNLOAD_MINIMUM_PART_SIZE
+            self._part_size = PartSize.DOWNLOAD_MINIMUM_PART_SIZE
         self._api = api
         self._bytes_done = 0
         self._running = threading.Event()
@@ -146,6 +201,9 @@ class Download(threading.Thread):
         self._errorback = None
         self._progress_callback = None
         self._time_started = 0
+
+        self._session = generate_session(self._api.session.proxies)
+
         try:
             self._file_size = self._get_file_size()
         except SbgError as error:
@@ -153,8 +211,13 @@ class Download(threading.Thread):
                 self._errorback(error)
             else:
                 raise error
-        self._status = TransferState.NOT_INITIALIZED
+        self._status = TransferState.PREPARING
         self._stop_signal = False
+
+    def __repr__(self):
+        return six.text_type(
+            '<Download: status={status}>'.format(status=self.status)
+        )
 
     @property
     def progress(self):
@@ -170,62 +233,116 @@ class Download(threading.Thread):
 
     @property
     def duration(self):
-        return time.time() - self._time_started
+        return (time.time() - self._time_started) * 1000
 
     @property
     def path(self):
         return self._file_path
 
     def add_callback(self, callback=None, errorback=None):
+        """
+        Adds a callback that will be called when the download
+        finishes successfully or when error is raised.
+        """
         self._callback = callback
         self._errorback = errorback
 
     def add_progress_callback(self, callback=None):
+        """
+        Adds a progress callback that will be called each time
+        a get_parts is successfully downloaded. The first argument of the
+        progress callback will be a progress object described in
+        sevenbridges.transfer.utils
+
+        :param callback: Callback function
+        """
         self._progress_callback = callback
 
     def pause(self):
-        self._running.clear()
-        self._status = TransferState.PAUSED
+        """
+        Pauses the download.
+        :raises SbgError: If upload is not in RUNNING state.
+        """
+        if self._status == TransferState.RUNNING:
+            self._running.clear()
+            self._status = TransferState.PAUSED
+        else:
+            raise SbgError('Can not pause. Download not in RUNNING state.')
 
     def stop(self):
-        self._stop_signal = True
-        self.join()
-        self._status = TransferState.STOPPED
-        if self._callback:
-            return self._callback(self._status)
+        """
+        Stops the download.
+        :raises SbgError: If download is not in PAUSED or RUNNING state.
+        """
+        if self.status in (TransferState.PAUSED, TransferState.RUNNING):
+            self._stop_signal = True
+            self.join()
+            self._status = TransferState.STOPPED
+            if self._callback:
+                return self._callback(self._status)
+        else:
+            raise SbgError(
+                'Can not stop. Download not in PAUSED or RUNNING state.'
+            )
 
     def resume(self):
-        self._running.set()
-        self._status = TransferState.RUNNING
+        """
+        Resumes the download.
+        :raises SbgError: If download is not in RUNNING state.
+        """
+        if self._status != TransferState.PAUSED:
+            self._running.set()
+            self._status = TransferState.RUNNING
+        else:
+            raise SbgError('Can not pause. Download not in PAUSED state.')
 
     def wait(self):
-        if self._status != TransferState.NOT_INITIALIZED:
-            self._status = TransferState.COMPLETED
-            self.join()
+        """
+        Blocks until download is completed.
+        """
+        self.join()
+
+    def start(self):
+        """
+        Starts the download.
+        :raises SbgError: If download is not in PREPARING state.
+        """
+        if self._status == TransferState.PREPARING:
+            self._running.set()
+            super(Download, self).start()
+            self._status = TransferState.RUNNING
+            self._time_started = time.time()
+        else:
+            raise SbgError(
+                'Unable to start. Download not in PREPARING state.'
+            )
 
     def run(self):
+        """
+        Runs the thread! Should not be used use start() method instead.
+        """
         self._running.set()
         self._status = TransferState.RUNNING
         self._time_started = time.time()
 
-        chunked_file = ChunkedFile(self._temp_file,
-                                   self._session,
-                                   self.url,
-                                   self._file_size,
-                                   self._chunk_size,
-                                   self._retry,
-                                   self._timeout,
-                                   self._api.download_pool)
+        parted_file = DPartedFile(self._temp_file,
+                                  self._session,
+                                  self.url,
+                                  self._file_size,
+                                  self._part_size,
+                                  self._retry_count,
+                                  self._timeout,
+                                  self._api.download_pool)
 
         try:
-            for chunk in chunked_file:
+            for part in parted_file:
                 if self._stop_signal:
                     return
                 self._running.wait()
-                self._bytes_done += chunk.size
+                self._bytes_done += part.size
                 if self._progress_callback:
                     progress = Progress(
-                        chunked_file.total, chunked_file.total_submitted,
+                        parted_file.total, parted_file.total_submitted,
                         self._bytes_done, self._file_size, self.duration
                     )
                     self._progress_callback(progress)
@@ -246,21 +363,16 @@ class Download(threading.Thread):
             return self._callback(self._status)
 
     def _get_file_size(self):
-        try:
-            response = requests.get(
-                self.url, timeout=self._timeout, stream=True
-            )
-        except requests.RequestException as e:
-            if self._errorback:
-                return self._errorback(SbgError(str(e)))
-            else:
-                raise SbgError(str(e))
-
-        file_size = response.headers.get('Content-Length', None)
-        if not file_size:
-            raise SbgError('Server did not provide Content-Length Headers!')
-
-        if int(file_size) == 0:
-            raise SbgError('File size is 0. Refusing to download.')
-
-        return int(file_size)
+        """
+        Fetches file size by reading the Content-Length header
+        for the resource.
+        :return: File size.
+        """
+        file_size = retry(self._retry_count)(_get_content_length)(
+            self._session, self.url, self._timeout
+        )
+        file_size = int(file_size)
+        if file_size == 0:
+            with io.open(self._file_path, 'a'):
+                pass
+        return file_size

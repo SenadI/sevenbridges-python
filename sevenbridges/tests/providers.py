@@ -1,3 +1,5 @@
+import time
+
 import faker
 
 generator = faker.Factory.create()
@@ -8,7 +10,7 @@ class EndpointProvider(object):
         self.request_mocker = request_mocker
         self.base_url = base_url
 
-    def enpoints(self):
+    def endpoints(self):
         return {
             'rate_limit_url': self.base_url + 'v2/rate_limit',
             'user_url': self.base_url + 'v2/user',
@@ -23,7 +25,32 @@ class EndpointProvider(object):
         }
 
     def defined(self):
-        self.request_mocker.get('/'.format(id), json=self.enpoints())
+        self.request_mocker.get('/'.format(id), json=self.endpoints())
+
+
+class RateLimitProvider(object):
+    def __init__(self, request_mocker, base_url):
+        self.request_mocker = request_mocker
+        self.base_url = base_url
+
+    @staticmethod
+    def default_rate():
+        return {
+            'rate': {
+                'limit': 1000,
+                "remaining": 1000,
+                'reset': (int(time.time() + 60))
+            },
+            'instance_limit': {
+                'limit': 1000,
+                'remaining': 999
+            }
+        }
+
+    def limit_available(self, **kwargs):
+        rate = self.default_rate()
+        rate.update(kwargs)
+        self.request_mocker.get('/rate_limit', json=rate)
 
 
 class UserProvider(object):
@@ -95,13 +122,14 @@ class ProjectProvider(object):
         items = [ProjectProvider.default_project() for _ in
                  range(num_of_projects)]
         for i in range(0, num_of_projects, limit):
-            href = self.base_url + '/projects?offset={}&limit={}'.format(
+            href = self.base_url + '/projects/?offset={}&limit={}'.format(
                 str(i), str(limit)
             )
             sub_items = items[i:i + limit]
             links = []
             if i + limit < num_of_projects:
-                next_url = '/projects?offset={offset}&limit={limit}'.format(
+                url = '/projects/?offset={offset}&limit={limit}&fields=_all'
+                next_url = url.format(
                     offset=str(i + limit), limit=str(limit)
                 )
                 next = {
@@ -112,7 +140,8 @@ class ProjectProvider(object):
                 links.append(next)
 
             if i > limit:
-                prev_url = '/projects?offset={offset}&limit={limit}'.format(
+                url = '/projects/?offset={offset}&limit={limit}&fields=_all'
+                prev_url = url.format(
                     offset=str(i - limit), limit=str(limit)
                 )
                 prev = {
@@ -167,9 +196,12 @@ class MemberProvider(object):
         self.request_mocker.get(href, json=response, headers={
             'x-total-matching-query': str(num_of_members)})
 
-    def member_exist(self, project, username):
+    def member_exist(self, project, username=None, email=None):
         member = self.default_member(project, username)
-        member.update({'username': username})
+        if username:
+            member.update({'username': username})
+        if email:
+            member.update({'email': email})
         url = '/projects/{project}/members'.format(
             project=project
         )
@@ -206,7 +238,10 @@ class FileProvider(object):
             'project': 'my/test-project',
             'metadata': {
                 'sample': generator.name()
-            }
+            },
+            'tags': [
+                generator.name()
+            ]
         }
 
     def download_info(self):
@@ -245,6 +280,12 @@ class FileProvider(object):
         file = FileProvider.default_file()
         self.request_mocker.patch(
             '/files/{id}/metadata'.format(id=id), json=file['metadata']
+        )
+
+    def tags_can_be_saved(self, id):
+        file = FileProvider.default_file()
+        self.request_mocker.request(
+            'PUT', '/files/{id}/tags'.format(id=id), json=file['tags']
         )
 
     def files_exist_for_project(self, project, num_of_files):
@@ -295,6 +336,21 @@ class FileProvider(object):
         items = [FileProvider.default_file() for _ in range(num_of_files)]
         url = '/files?project={project}&origin.{key}={value}'.format(
             project=project, key=key, value=value
+        )
+        href = self.base_url + url
+        links = []
+        response = {
+            'href': href,
+            'items': items,
+            'links': links
+        }
+        self.request_mocker.get(href, json=response, headers={
+            'x-total-matching-query': str(num_of_files)})
+
+    def files_exist_for_file_tag(self, project, tags, num_of_files):
+        items = [FileProvider.default_file() for _ in range(num_of_files)]
+        url = '/files?project={project}&tag={tag1}&tag={tag2}'.format(
+            project=project, tag1=tags[0], tag2=tags[1]
         )
         href = self.base_url + url
         links = []
@@ -443,7 +499,7 @@ class TaskProvider(object):
         }
 
     def tasks_exists_for_project(self, project, num_of_tasks):
-        items = [AppProvider.default_app() for _ in range(num_of_tasks)]
+        items = [TaskProvider.default_task() for _ in range(num_of_tasks)]
         project_url = '/tasks?project={project}'.format(project=project)
         href = self.base_url + project_url
 
@@ -457,7 +513,7 @@ class TaskProvider(object):
             'x-total-matching-query': str(num_of_tasks)})
 
     def tasks_in_project_for_parent(self, project, parent, num_of_tasks):
-        items = [AppProvider.default_app() for _ in range(num_of_tasks)]
+        items = [TaskProvider.default_task() for _ in range(num_of_tasks)]
         url = '/tasks?project={project}&parent={parent}'.format(
             project=project, parent=parent
         )
@@ -477,8 +533,25 @@ class TaskProvider(object):
         self.request_mocker.get(href_no_parent, json=response, headers={
             'x-total-matching-query': str(num_of_tasks)})
 
+    def tasks_in_project(self, project, num_of_tasks):
+        items = [TaskProvider.default_task() for _ in range(num_of_tasks)]
+        url = '/tasks?project={project}'.format(
+            project=project
+        )
+        href = self.base_url + url
+
+        links = []
+        response = {
+            'href': href,
+            'items': items,
+            'links': links
+        }
+
+        self.request_mocker.get(href, json=response, headers={
+            'x-total-matching-query': str(num_of_tasks)})
+
     def tasks_exist_for_parent(self, parent, num_of_tasks):
-        items = [AppProvider.default_app() for _ in range(num_of_tasks)]
+        items = [TaskProvider.default_task() for _ in range(num_of_tasks)]
         url = '/tasks?parent={parent}'.format(parent=parent)
         href = self.base_url + url
         links = []
@@ -493,6 +566,13 @@ class TaskProvider(object):
     def can_be_created(self, **kwargs):
         task = self.default_task()
         task.update(kwargs)
+        href = '/tasks'
+        self.request_mocker.request('POST', href, json=task)
+
+    def created_with_errors(self, **kwargs):
+        task = self.default_task()
+        task.update(kwargs)
+        task['errors'] = [{'error': 'some_error'}]
         href = '/tasks'
         self.request_mocker.request('POST', href, json=task)
 
@@ -532,3 +612,321 @@ class TaskProvider(object):
             '/tasks/{id}/execution_details'.format(id=id),
             json=execution_details
         )
+
+
+class VolumeProvider(object):
+    def __init__(self, request_mocker, base_url):
+        self.request_mocker = request_mocker
+        self.base_url = base_url
+
+    @staticmethod
+    def default_volume():
+        volume = {
+            "href": generator.url(),
+            "id": '{}/{}'.format('my', 'my-volume'),
+            "name": generator.name(),
+            "description": "Awesome!",
+            "access_mode": "RO",
+            "service": {
+                "type": "GCS",
+                "bucket": "test",
+                "prefix": "",
+                "root_url": "https://www.googleapis.com/",
+                "credentials": {
+                    "client_email": "test@test.com"
+                }
+            }
+        }
+        return volume
+
+    def can_be_queried(self, num):
+        items = [VolumeProvider.default_volume() for _ in range(num)]
+        href = self.base_url + '/storage/volumes'
+        links = []
+        response = {
+            'href': href,
+            'items': items,
+            'links': links
+        }
+        self.request_mocker.get(href, json=response, headers={
+            'x-total-matching-query': str(num)})
+
+    def volume_created(self, name):
+        volume = VolumeProvider.default_volume()
+        volume['name'] = name
+        self.request_mocker.request('POST', '/storage/volumes', json=volume)
+
+    def exist(self, **kwargs):
+        volume = VolumeProvider.default_volume()
+        volume.update(kwargs)
+        url = self.base_url + '/storage/volumes/{}'.format(volume['id'])
+        self.request_mocker.get(url, json=volume)
+
+    def can_be_modified(self, **kwargs):
+        volume = VolumeProvider.default_volume()
+        volume.update(kwargs)
+        url = self.base_url + '/storage/volumes/{}'.format(volume['id'])
+        self.request_mocker.patch(url, json=volume)
+
+
+class MarkerProvider(object):
+    def __init__(self, request_mocker, base_url):
+        self.request_mocker = request_mocker
+        self.base_url = base_url
+
+    @staticmethod
+    def default_marker():
+        volume = {
+            "href": generator.url(),
+            "id": generator.uuid4(),
+            "name": generator.name(),
+            "file": generator.uuid4(),
+            "chromosome": "chr1",
+            "position": {
+                "start": 2,
+                "end": 3
+            }
+        }
+        return volume
+
+    def query(self, total, file):
+        items = [MarkerProvider.default_marker() for _ in range(10)]
+        href = self.base_url + '/genome/markers?file={}'.format(file)
+        links = []
+        response = {
+            'href': href,
+            'items': items,
+            'links': links
+        }
+        self.request_mocker.get(href, json=response, headers={
+            'x-total-matching-query': str(total)})
+
+    def created(self, **kwargs):
+        marker = MarkerProvider.default_marker()
+        marker.update(**kwargs)
+        self.request_mocker.request('POST', '/genome/markers', json=marker)
+
+    def exists(self, **kwargs):
+        marker = MarkerProvider.default_marker()
+        marker.update(**kwargs)
+        url = self.base_url + '/genome/markers/{}'.format(marker['id'])
+        self.request_mocker.get(url, json=marker)
+
+    def modified(self, **kwargs):
+        marker = MarkerProvider.default_marker()
+        marker.update(**kwargs)
+        url = self.base_url + '/genome/markers/{}'.format(marker['id'])
+        self.request_mocker.patch(url, json=marker)
+
+
+class ActionProvider(object):
+    def __init__(self, request_mocker, base_url):
+        self.request_mocker = request_mocker
+        self.base_url = base_url
+
+    @staticmethod
+    def default_copy_result():
+        copy_result = {
+            'id': {
+                "status": "ok",
+                "new_file_id": "2",
+                "new_file_name": "test"
+            }
+        }
+        return copy_result
+
+    def feedback_set(self):
+        url = self.base_url + "/action/notifications/feedback"
+        self.request_mocker.post(url)
+
+    def can_bulk_copy(self, **kwargs):
+        result = self.default_copy_result()
+        result.update(kwargs)
+        url = self.base_url + "/action/files/copy"
+        self.request_mocker.post(url, json=result)
+
+
+class DivisionProvider(object):
+    def __init__(self, request_mocker, base_url):
+        self.request_mocker = request_mocker
+        self.base_url = base_url
+
+    @staticmethod
+    def default_division():
+        return {
+            'href': generator.url(),
+            'id': '{}/{}'.format('my', 'my-project'),
+            'name': generator.user_name(),
+        }
+
+    def exists(self, **kwargs):
+        division = self.default_division()
+        division.update(kwargs)
+        id = division['id']
+        self.request_mocker.get('/divisions/{}'.format(id), json=division)
+
+    def query(self, total):
+        items = [DivisionProvider.default_division() for _ in range(total)]
+        url = '/divisions'
+        href = self.base_url + url
+        links = []
+        response = {
+            'href': href,
+            'items': items,
+            'links': links
+        }
+        self.request_mocker.get(href, json=response, headers={
+            'x-total-matching-query': str(total)})
+
+    def teams_exist(self, id, total):
+        items = [TeamProvider.default_team() for _ in range(total)]
+        url = '/teams?division={}'.format(id)
+        href = self.base_url + url
+        links = []
+        response = {
+            'href': href,
+            'items': items,
+            'links': links
+        }
+        self.request_mocker.get(href, json=response, headers={
+            'x-total-matching-query': str(total)})
+
+
+class TeamProvider(object):
+    def __init__(self, request_mocker, base_url):
+        self.request_mocker = request_mocker
+        self.base_url = base_url
+
+    @staticmethod
+    def default_team():
+        return {
+            'href': generator.url(),
+            'id': '{}/{}'.format('my', 'my-project'),
+            'name': generator.user_name(),
+        }
+
+    def exists(self, **kwargs):
+        team = self.default_team()
+        team.update(kwargs)
+        id = team['id']
+        self.request_mocker.get('/teams/{}'.format(id), json=team)
+
+    def query(self, total):
+        items = [TeamProvider.default_team() for _ in range(total)]
+        url = '/teams'
+        href = self.base_url + url
+        links = []
+        response = {
+            'href': href,
+            'items': items,
+            'links': links
+        }
+        self.request_mocker.get(href, json=response, headers={
+            'x-total-matching-query': str(total)})
+
+    def created(self, name):
+        team = TeamProvider.default_team()
+        team['name'] = name
+        self.request_mocker.request('POST', '/teams', json=team)
+
+    def modified(self, **kwargs):
+        team = TeamProvider.default_team()
+        team.update(kwargs)
+        self.request_mocker.patch('/teams/{}'.format(team['id']), json=team)
+
+
+class TeamMemberProvider(object):
+    def __init__(self, request_mocker, base_url):
+        self.request_mocker = request_mocker
+        self.base_url = base_url
+
+    def default_member(self, id, username=None):
+        if username is None:
+            username = generator.user_name()
+        url = self.base_url + '/team/{}/members/{}'.format(id, username)
+        return {
+            'href': url,
+            'username': username,
+            'permissions': {
+                'write': True,
+                'read': True,
+                'admin': False,
+                'copy': False
+            }
+        }
+
+    def queried(self, team, total=10):
+        items = [self.default_member(team) for _ in range(total)]
+        href = self.base_url + '/teams/{}/members'.format(team)
+        links = []
+        response = {
+            'href': href,
+            'items': items,
+            'links': links
+        }
+        self.request_mocker.get(href, json=response, headers={
+            'x-total-matching-query': str(total)})
+
+
+class ImportsProvider(object):
+    def __init__(self, request_mocker, base_url):
+        self.request_mocker = request_mocker
+        self.base_url = base_url
+
+    @staticmethod
+    def default_import():
+        return {
+            "id": generator.uuid4(),
+            "href": generator.url(),
+            "state": generator.name(),
+            "overwrite": False
+        }
+
+    def query(self, total):
+        items = [ImportsProvider.default_import() for _ in range(total)]
+        href = self.base_url + '/storage/imports'
+        links = []
+        response = {
+            'href': href,
+            'items': items,
+            'links': links
+        }
+        self.request_mocker.get(href, json=response, headers={
+            'x-total-matching-query': str(total)})
+
+    def can_be_submitted(self, **kwargs):
+        imports = self.default_import()
+        imports.update(kwargs)
+        self.request_mocker.post('/storage/imports', json=imports)
+
+
+class ExportsProvider(object):
+    def __init__(self, request_mocker, base_url):
+        self.request_mocker = request_mocker
+        self.base_url = base_url
+
+    @staticmethod
+    def default_export():
+        return {
+            "id": generator.uuid4(),
+            "href": generator.url(),
+            "state": generator.name(),
+            "destination": generator.name()
+        }
+
+    def query(self, total):
+        items = [self.default_export() for _ in range(total)]
+        href = self.base_url + '/storage/exports'
+        links = []
+        response = {
+            'href': href,
+            'items': items,
+            'links': links
+        }
+        self.request_mocker.get(href, json=response, headers={
+            'x-total-matching-query': str(total)})
+
+    def can_be_submitted(self, **kwargs):
+        exports = self.default_export()
+        exports.update(kwargs)
+        self.request_mocker.post('/storage/exports', json=exports)

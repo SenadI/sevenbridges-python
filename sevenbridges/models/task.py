@@ -1,21 +1,28 @@
+import logging
+
 import six
 
-from sevenbridges.meta.resource import Resource
 from sevenbridges.decorators import inplace_reload
-from sevenbridges.errors import SbgError
-from sevenbridges.meta.transformer import Transform
-from sevenbridges.models.compound.batch_by import BatchBy
-from sevenbridges.models.compound.batch_group import BatchGroup
-from sevenbridges.models.compound.execution_status import ExecutionStatus
-from sevenbridges.models.compound.input import Input
-from sevenbridges.models.compound.output import Output
-from sevenbridges.models.compound.price import Price
-from sevenbridges.models.execution_details import ExecutionDetails
-from sevenbridges.models.file import File
+from sevenbridges.errors import (
+    SbgError, TaskValidationError
+)
 from sevenbridges.meta.fields import (
     HrefField, UuidField, StringField, CompoundField, DateTimeField,
-    BooleanField,
-    DictField)
+    BooleanField, DictField
+)
+from sevenbridges.meta.resource import Resource
+from sevenbridges.meta.transformer import Transform
+from sevenbridges.models.app import App
+from sevenbridges.models.compound.price import Price
+from sevenbridges.models.compound.tasks.batch_by import BatchBy
+from sevenbridges.models.compound.tasks.batch_group import BatchGroup
+from sevenbridges.models.compound.tasks.execution_status import ExecutionStatus
+from sevenbridges.models.compound.tasks.input import Input
+from sevenbridges.models.compound.tasks.output import Output
+from sevenbridges.models.execution_details import ExecutionDetails
+from sevenbridges.models.file import File
+
+logger = logging.getLogger(__name__)
 
 
 class Task(Resource):
@@ -42,30 +49,51 @@ class Task(Resource):
     created_by = StringField(read_only=True)
     executed_by = StringField(read_only=True)
     start_time = DateTimeField(read_only=True)
+    created_time = DateTimeField(read_only=True)
+    end_time = DateTimeField(read_only=True)
     batch = BooleanField(read_only=True)
     batch_by = CompoundField(BatchBy, read_only=False)
     batch_group = CompoundField(BatchGroup, read_only=True)
     batch_input = StringField(read_only=False)
     parent = StringField(read_only=True)
-    end_time = DateTimeField(read_only=True)
     execution_status = CompoundField(ExecutionStatus, read_only=True)
     errors = DictField(read_only=True)
+    warnings = DictField(read_only=True)
     price = CompoundField(Price, read_only=True)
     inputs = CompoundField(Input, read_only=False)
     outputs = CompoundField(Output, read_only=True)
+    use_interruptible_instances = BooleanField()
 
     def __str__(self):
         return six.text_type('<Task: id={id}>'.format(id=self.id))
 
+    def __eq__(self, other):
+        if self is None and other:
+            return False
+        if other is None and self:
+            return False
+        if self is other:
+            return True
+        return self.id == other.id and self.__class__ == other.__class__
+
     @classmethod
     def query(cls, project=None, status=None, batch=None,
-              parent=None, offset=None, limit=None, api=None):
+              parent=None, created_from=None, created_to=None,
+              started_from=None, started_to=None, ended_from=None,
+              ended_to=None, offset=None, limit=None, api=None):
         """
-        Query (List) tasks
+        Query (List) tasks. Date parameters may be both strings and python date
+        objects.
         :param project: Target project. optional.
         :param status: Task status.
         :param batch: Only batch tasks.
         :param parent: Parent batch task identifier.
+        :param ended_to: All tasks that ended until this date.
+        :param ended_from: All tasks that ended from this date.
+        :param started_to: All tasks that were started until this date.
+        :param started_from: All tasks that were started from this date.
+        :param created_to: All tasks that were created until this date.
+        :param created_from: All tasks that were created from this date.
         :param offset: Pagination offset.
         :param limit: Pagination limit.
         :param api: Api instance.
@@ -74,33 +102,64 @@ class Task(Resource):
         api = api or cls._API
         if parent:
             parent = Transform.to_task(parent)
-        return super(Task, cls)._query(url=cls._URL['query'], project=project,
-                                       status=status, batch=batch,
-                                       parent=parent, offset=offset,
-                                       limit=limit, api=api)
+        if project:
+            project = Transform.to_project(project)
+        if created_from:
+            created_from = Transform.to_datestring(created_from)
+        if created_to:
+            created_to = Transform.to_datestring(created_to)
+        if started_from:
+            started_from = Transform.to_datestring(started_from)
+        if started_to:
+            started_to = Transform.to_datestring(started_to)
+        if ended_from:
+            ended_from = Transform.to_datestring(ended_from)
+        if ended_to:
+            ended_to = Transform.to_datestring(ended_to)
+
+        return super(Task, cls)._query(
+            url=cls._URL['query'], project=project, status=status, batch=batch,
+            parent=parent, created_from=created_from, created_to=created_to,
+            started_from=started_from, started_to=started_to,
+            ended_from=ended_from, ended_to=ended_to, offset=offset,
+            limit=limit, fields='_all', api=api
+        )
 
     @classmethod
-    def create(cls, name, project, app, batch_input=None, batch_by=None,
-               inputs=None,
-               description=None, run=False, api=None):
+    def create(cls, name, project, app, revision=None, batch_input=None,
+               batch_by=None, inputs=None, description=None, run=False,
+               disable_batch=False, interruptible=True, api=None):
 
         """
         Creates a task on server.
         :param name: Task name.
         :param project: Project identifier.
         :param app: CWL app identifier.
+        :param revision: CWL app revision.
         :param batch_input: Batch input.
         :param batch_by: Batch criteria.
         :param inputs: Input map.
         :param description: Task description.
         :param run: True if you want to run a task upon creation.
+        :param disable_batch: If True disables batching of a batch task.
+        :param interruptible: If True interruptible instance will be used.
         :param api: Api instance.
         :return: Task object.
+        :raises: TaskValidationError if validation Fails.
+        :raises: SbgError if any exception occurs during request.
         """
         task_data = {}
+        params = {}
 
         project = Transform.to_project(project)
-        app = Transform.to_app(app)
+
+        app_id = Transform.to_app(app)
+
+        if revision:
+            app_id = app_id + "/" + six.text_type(revision)
+        else:
+            if isinstance(app, App):
+                app_id = app_id + "/" + six.text_type(app.revision)
 
         task_inputs = {'inputs': {}}
         for k, v in inputs.items():
@@ -128,25 +187,36 @@ class Task(Resource):
             else:
                 task_inputs['inputs'][k] = v
 
-        if batch_input:
+        if batch_input and batch_by:
             task_data['batch_input'] = batch_input
-
-        if batch_by:
             task_data['batch_by'] = batch_by
+            if disable_batch:
+                params.update({'batch': False})
 
         task_meta = {
             'name': name,
             'project': project,
-            'app': app,
-            'description': description
+            'app': app_id,
+            'description': description,
         }
         task_data.update(task_meta)
         task_data.update(task_inputs)
 
-        params = {'action': 'run'} if run else {}
+        task_data['use_interruptible_instances'] = interruptible
+
+        if run:
+            params.update({'action': 'run'})
+
         api = api if api else cls._API
         created_task = api.post(cls._URL['query'], data=task_data,
                                 params=params).json()
+        if run and 'errors' in created_task:
+            if bool(created_task['errors']):
+                raise TaskValidationError(
+                    'Unable to run task! Task contains errors.',
+                    task=Task(api=api, **created_task)
+                )
+
         return Task(api=api, **created_task)
 
     @inplace_reload
@@ -156,21 +226,35 @@ class Task(Resource):
         :param inplace Apply action on the current object or return a new one.
         :return: Task object.
         """
+        extra = {
+            'resource': self.__class__.__name__,
+            'query': {'id': self.id}
+        }
+        logger.info('Aborting task', extra=extra)
         task_data = self._api.post(
             url=self._URL['abort'].format(id=self.id)).json()
         return Task(api=self._api, **task_data)
 
     @inplace_reload
-    def run(self, batch=True, inplace=True):
+    def run(self, batch=True, interruptible=True, inplace=True):
         """
         Run task
         :param batch if False batching will be disabled.
+        :param interruptible: If true interruptible instance
+        will be used.
         :param inplace Apply action on the current object or return a new one.
         :return: Task object.
         """
         params = {}
         if not batch:
             params['batch'] = False
+
+        params['use_interruptible_instances'] = interruptible
+        extra = {
+            'resource': self.__class__.__name__,
+            'query': {'id': self.id, 'batch': batch}
+        }
+        logger.info('Running task', extra=extra)
         task_data = self._api.post(
             url=self._URL['run'].format(id=self.id), params=params).json()
         return Task(api=self._api, **task_data)
@@ -203,6 +287,11 @@ class Task(Resource):
                         task_request_data['inputs'][input_id] = in_list
                     else:
                         task_request_data['inputs'][input_id] = input_value
+            extra = {
+                'resource': self.__class__.__name__,
+                'query': {'id': self.id, 'data': task_request_data}
+            }
+            logger.info('Saving task', extra=extra)
             data = self._api.patch(url=self._URL['get'].format(id=self.id),
                                    data=task_request_data).json()
             task = Task(api=self._api, **data)
@@ -220,6 +309,11 @@ class Task(Resource):
         Retrieves execution details for a task.
         :return: Execution details instance.
         """
+        extra = {
+            'resource': self.__class__.__name__,
+            'query': {'id': self.id}
+        }
+        logger.info('Get execution details', extra=extra)
         data = self._api.get(
             self._URL['execution_details'].format(id=self.id)).json()
         return ExecutionDetails(api=self._api, **data)

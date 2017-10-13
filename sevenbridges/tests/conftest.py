@@ -1,18 +1,23 @@
-import pytest
 import faker
+import pytest
 import requests_mock
 
 from sevenbridges import Api
 from sevenbridges.tests.providers import (
     ProjectProvider, EndpointProvider, UserProvider, MemberProvider,
-    FileProvider, AppProvider, TaskProvider
-)
+    FileProvider, AppProvider, TaskProvider,
+    VolumeProvider, RateLimitProvider,
+    ActionProvider, DivisionProvider, TeamProvider, MarkerProvider,
+    ImportsProvider, ExportsProvider, TeamMemberProvider)
 from sevenbridges.tests.verifiers import (
     EndpointVerifier, ProjectVerifier, UserVerifier, MemberVerifier,
-    FileVerifier, AppVerifier, TaskVerifier
-)
+    FileVerifier, AppVerifier, TaskVerifier, VolumeVerifier, ActionVerifier,
+    DivisionVerifier, TeamVerifier, MarkerVerifier, ImportsVerifier,
+    ExportsVerifier)
 
 generator = faker.Factory.create()
+
+requests_mock.mock.case_sensitive = True
 
 
 @pytest.fixture
@@ -35,11 +40,20 @@ class Precondition(object):
     def __init__(self, request_mocker, base_url):
         self.user = UserProvider(request_mocker, base_url)
         self.endpoints = EndpointProvider(request_mocker, base_url)
+        self.rate = RateLimitProvider(request_mocker, base_url)
         self.project = ProjectProvider(request_mocker, base_url)
         self.member = MemberProvider(request_mocker, base_url)
         self.file = FileProvider(request_mocker, base_url)
         self.app = AppProvider(request_mocker, base_url)
         self.task = TaskProvider(request_mocker, base_url)
+        self.volume = VolumeProvider(request_mocker, base_url)
+        self.action = ActionProvider(request_mocker, base_url)
+        self.division = DivisionProvider(request_mocker, base_url)
+        self.team = TeamProvider(request_mocker, base_url)
+        self.marker = MarkerProvider(request_mocker, base_url)
+        self.imports = ImportsProvider(request_mocker, base_url)
+        self.exports = ExportsProvider(request_mocker, base_url)
+        self.team_member = TeamMemberProvider(request_mocker, base_url)
 
 
 class Verifier(object):
@@ -55,6 +69,13 @@ class Verifier(object):
         self.file = FileVerifier(request_mocker)
         self.app = AppVerifier(request_mocker)
         self.task = TaskVerifier(request_mocker)
+        self.volume = VolumeVerifier(request_mocker)
+        self.action = ActionVerifier(request_mocker)
+        self.division = DivisionVerifier(request_mocker)
+        self.team = TeamVerifier(request_mocker)
+        self.marker = MarkerVerifier(request_mocker)
+        self.imports = ImportsVerifier(request_mocker)
+        self.exports = ExportsVerifier(request_mocker)
 
 
 @pytest.fixture
@@ -85,3 +106,27 @@ def api(base_url):
 @pytest.fixture
 def base_url():
     return generator.url()[:-1]
+
+
+@pytest.fixture
+def config_parser():
+    class ConfigParser(object):
+        def __init__(self, data):
+            self.data = data
+
+        def get(self, profile, item):
+            return self.data[profile][item]
+
+        def read(self, stream):
+            pass
+
+    class Mock(object):
+        def __init__(self, data):
+            self.data = data
+
+        def __call__(self, *args, **kwargs):
+            data = dict(kwargs)
+            data.update(self.data)
+            return ConfigParser(data)
+
+    return Mock

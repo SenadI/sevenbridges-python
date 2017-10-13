@@ -1,11 +1,11 @@
 import six
 
-from sevenbridges.meta.resource import Resource
-from sevenbridges.models.compound.invoice_period import InvoicePeriod
-from sevenbridges.models.compound.price import Price
 from sevenbridges.meta.fields import (
     HrefField, StringField, BooleanField, CompoundField
 )
+from sevenbridges.meta.resource import Resource
+from sevenbridges.models.compound.billing.invoice_period import InvoicePeriod
+from sevenbridges.models.compound.price import Price
 
 
 class Invoice(Resource):
@@ -27,6 +27,15 @@ class Invoice(Resource):
     def __str__(self):
         return six.text_type('<Invoice: id={id}>'.format(id=self.id))
 
+    def __eq__(self, other):
+        if self is None and other:
+            return False
+        if other is None and self:
+            return False
+        if self is other:
+            return True
+        return self.id == other.id and self.__class__ == other.__class__
+
     @classmethod
     def query(cls, offset=None, limit=None, api=None):
         """
@@ -38,4 +47,6 @@ class Invoice(Resource):
         """
         api = api if api else cls._API
         return super(Invoice, cls)._query(
-            url=cls._URL['query'], offset=offset, limit=limit, api=api)
+            url=cls._URL['query'], offset=offset, limit=limit, fields='_all',
+            api=api
+        )

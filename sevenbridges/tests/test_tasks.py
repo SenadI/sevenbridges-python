@@ -1,5 +1,9 @@
+from datetime import datetime
+
 import faker
 import pytest
+
+from sevenbridges.errors import SbgError
 
 generator = faker.Factory.create()
 
@@ -21,6 +25,29 @@ def test_tasks_query(api, given, verifier, parent):
     assert len(projects) == total
 
     verifier.task.tasks_for_project_fetched(id)
+
+
+def test_tasks_query_dates(api, given, verifier):
+    test_date = datetime(2017, 1, 10, 14, 4, 23, 838459)
+    test_datestring = '2017-01-10T14:04:23'
+    # preconditions
+    total = 10
+    owner = generator.user_name()
+    project_short_name = generator.slug()
+    id = '{}/{}'.format(owner, project_short_name)
+    given.task.tasks_in_project(id, total)
+
+    # action
+    tasks = api.tasks.query(project=id, created_from=test_date,
+                            created_to=test_date,
+                            started_from=test_date, started_to=test_date,
+                            ended_from=test_date, ended_to=test_date)
+
+    # verification
+    assert tasks.total == total
+    assert len(tasks) == total
+
+    verifier.task.tasks_with_dates_fetched(id, test_datestring)
 
 
 def test_task_get_batch_children(api, given, verifier):
@@ -66,6 +93,39 @@ def test_create_task(api, given, verifier, run):
     # verification
     assert repr(task)
     verifier.task.task_created()
+
+
+@pytest.mark.parametrize("run", [True, False])
+def test_create_task_with_errors(api, given, verifier, run):
+    # preconditions
+    owner = generator.user_name()
+    project_short_name = generator.slug()
+    project_id = '{}/{}'.format(owner, project_short_name)
+    given.project.exists(id=project_id)
+    given.file.files_exist_for_project(project_id, 10)
+    app_id = '{}/{}/{}'.format(owner, project_short_name, 'app-name')
+    batch_by = {'type': 'item'}
+
+    project = api.projects.get(id=project_id)
+    files = api.files.query(project=project)
+    inputs = {'FastQC': files, 'reads': False, 'some_file': files[0]}
+    given.task.created_with_errors(
+        batch_by=batch_by, batch_input='FastQC', app=app_id, project=project.id
+    )
+    # action
+    if run:
+        with pytest.raises(SbgError):
+            task = api.tasks.create(
+                generator.name(), project, app_id, batch_input='FastQC',
+                batch_by=batch_by, inputs=inputs, run=run
+            )
+    else:
+        task = api.tasks.create(
+            generator.name(), project, app_id, batch_input='FastQC',
+            batch_by=batch_by, inputs=inputs, run=run
+        )
+        assert repr(task)
+        verifier.task.task_created()
 
 
 def test_abort_task(api, given, verifier):
@@ -116,15 +176,20 @@ def test_save_task(api, given, verifier):
 
     # action
     project = api.projects.get(id=project_id)
-    files = project.get_files(project, 10)
+    files = project.get_files(limit=10)
     task = api.tasks.get(id)
     task.name = generator.name()
     task.description = generator.name()
     task.inputs = {'test': files, 'test1': files[0], 'test2': 'test'}
     task.save()
-
     assert task.status == 'DRAFT'
+    # verification
+    verifier.task.task_saved(id)
 
+    files.append(files[0])
+    task.inputs = {'test': files, 'test1': files[0], 'test2': 'test'}
+    task.save()
+    assert task.status == 'DRAFT'
     # verification
     verifier.task.task_saved(id)
 

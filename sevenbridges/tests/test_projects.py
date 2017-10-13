@@ -46,7 +46,7 @@ def test_create_project(api, given, verifier, name):
         verifier.project.created()
     else:
         with pytest.raises(SbgError):
-            _ = api.projects.create(
+            api.projects.create(
                 name=name, billing_group=billing_group,
                 description=project_description
             )
@@ -101,6 +101,31 @@ def test_project_add_member(api, given, verifier):
     member = project.add_member(mocked_member['username'],
                                 mocked_member['permissions'])
     assert member.username == mocked_member['username']
+    assert member.permissions['write'] == mocked_member['permissions']['write']
+    assert member.permissions['read'] == mocked_member['permissions']['read']
+    assert member.permissions['copy'] == mocked_member['permissions']['copy']
+    assert member.permissions['execute'] == mocked_member['permissions'][
+        'execute']
+    assert member.permissions['admin'] == mocked_member['permissions']['admin']
+
+    # verifier
+    verifier.member.member_added(project=id)
+
+
+def test_project_add_member_email(api, given, verifier):
+    # preconditions
+    owner = generator.user_name()
+    project_short_name = generator.slug()
+    id = '{}/{}'.format(owner, project_short_name)
+    email = generator.email()
+    given.project.exists(id=id)
+    mocked_member = given.member.member_exist(project=id, email=email)
+
+    # action
+    project = api.projects.get(id)
+    member = project.add_member_email(mocked_member['email'],
+                                      mocked_member['permissions'])
+    assert member.email == mocked_member['email']
     assert member.permissions['write'] == mocked_member['permissions']['write']
     assert member.permissions['read'] == mocked_member['permissions']['read']
     assert member.permissions['copy'] == mocked_member['permissions']['copy']
@@ -191,7 +216,7 @@ def test_member_permissions_save(api, given, verifier):
     member.permissions['admin'] = True
     member.save()
 
-    assert username in repr(member)
+    assert username == member.username
 
     # verifier
     verifier.member.member_permissions_modified(id, mocked_member['username'])

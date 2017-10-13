@@ -1,24 +1,33 @@
-
 Quickstart
 ==========
+
+On this page, you'll find a reference for the Seven Bridges API Python client.
+
+We encourage you to consult our other API resources:
+
+* The Seven Bridges Github repository, `okAPI <https://github.com/sbg/okAPI/tree/master/Recipes/SBPLAT>`_, which includes Python example scripts such as recipes (which allow you to perform specific tasks) and tutorials (which will walk you through entire analyses) via the API. These recipes and tutorials make use of the sevenbridges-python bindings below.
+* The Seven Bridges API documentation on our `Knowledge Center <http://docs.sevenbridges.com/docs/the-api>`_, which includes a reference collection of API requests to help you get started right away.
 
 Authentication and Configuration
 --------------------------------
 
 In order to authenticate with the API, you should pass the following items to sevenbridges-python:
 
-(a) Your authentication token;
-(b) The API endpoint you will be interacting with. This is either the endpoint for the Seven Bridges Platform or for the Seven Bridges Cancer Genomics Cloud (CGC).
+(a) Your authentication token
+(b) The API endpoint you will be interacting with. This is either the endpoint for the Seven Bridges Platform or 
+for the Seven Bridges Cancer Genomics Cloud (CGC) or for CAVATICA.
 
 You can find your authentication token on the respective pages:
 
--  https://igor.sbgenomics.com/developers for the Seven Bridges Platform
--  https://cgc.sbgenomics.com/developers for the CGC
+-  https://igor.sbgenomics.com/developer for the Seven Bridges Platform
+-  https://cgc.sbgenomics.com/developer for the CGC
+-  https://cavatica.sbgenomics.com/developer for Cavatica
 
 The API endpoints for each environment are:
 
 -  https://api.sbgenomics.com/v2 for the Seven Bridges Platform
 -  https://cgc-api.sbgenomics.com/v2 for the CGC.
+-  https://cavatica-api.sbgenomics.com/v2 for CAVATICA
 
 
 .. note:: We will see below how to supply information about your auth token and endpoint to the library.
@@ -28,6 +37,7 @@ For more information about the API, including details of the available parameter
 
 -  http://docs.sevenbridges.com/docs/the-api for the Seven Bridges Platform.
 -  http://docs.cancergenomicscloud.org/docs/the-cgc-api for the CGC.
+-  http://docs.cavatica.org/docs/the-api for CAVATICA
 
 
 How to use the Quickstart
@@ -39,13 +49,14 @@ We recommend that you pay particular attention to the section 'Managing Projects
 Initializing the library
 ------------------------
 
-Once you have obtained your authentication token from one of the URLs listed above, you can initialize the :code:`Api` object defined by this library by passing in your authentication token and endpiont. There are three methods to do this. Details of each method are given below:
+Once you have obtained your authentication token from one of the URLs listed above, you can initialize the :code:`Api` object defined by this library by passing in your authentication token and endpoint. There are three methods to do this. Details of each method are given below:
 
-1. Pass the parameters ``url`` and ``token`` explicitly when initializing the
+1. Pass the parameters ``url`` and ``token`` and optional ``proxies`` explicitly when initializing the
    API object.
-2. Set the API endpoint and token to the environment variables ``API_URL``
-   and ``AUTH_TOKEN`` respectively.
-3. Use a configuration file ``$HOME/.sbgrc`` with the defined parameters.
+2. Set the API endpoint and token to the environment variables ``SB_API_ENDPOINT``
+   and ``SB_AUTH_TOKEN`` respectively.
+3. Use a configuration file ``$HOME/.sevenbridges/credentials`` with the defined credentials parameters. If config is used proxy settings will be read from
+   ``$HOME/.sevenbridges/sevenbridges-python/config`` .ini like file for section ``[proxies]``
 
 .. note:: Keep your authentication token safe! It encodes all your credentials on the Platform or CGC. Generally, we recommend storing the token in a configuration file, which will then be stored in your home folder rather than in the code itself. This prevents the authentication token from being committed to source code repositories.
 
@@ -64,12 +75,12 @@ Then, use one of the following three methods to initialize the library:
 1. Initialize the library explicitly
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-The library can be also instatiated explicity by passing the URL and authentication token
+The library can be also instantiated explicitly by passing the URL and authentication token
 as key-value arguments into the :code:`Api` object.
 
 .. code:: python
 
-    api = sbg.Api(url='https://api.sbgenomics.com/v2', token='27d598b71beb4660952739ed5f94ebda')
+    api = sbg.Api(url='https://api.sbgenomics.com/v2', token='<TOKEN_HERE>')
 
 *Note* - you can initialize several API clients with
 different credentials or environments.
@@ -82,26 +93,29 @@ different credentials or environments.
     import os
     
     # Usually these variables would be set in the shell beforehand
-    os.environ['API_URL'] = '<https://api.sbgenomics.com/v2 or https://cgc-api.sbgenomics.com/v2>'
-    os.environ['AUTH_TOKEN'] = '<TOKEN_HERE>'
-    
-    c = sbg.Config()
-    api = sbg.Api(config=c)
+    os.environ['SB_API_ENDPOINT'] = '<https://api.sbgenomics.com/v2' # or 'https://cgc-api.sbgenomics.com/v2>' for cgc, or 'https://cavatica-api.sbgenomics.com/v2' for cavatica
+    os.environ['SB_AUTH_TOKEN'] = '<TOKEN_HERE>'
+
+    api = sbg.Api()
 
 3. Initialize the library using a configuration file
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-The configuration file, ``.sbgrc``, has a simple ``.ini`` file format, with
-the environment (the Seven Bridges Platform, or the CGC) indicated in square brackets, as shown:
+The configuration file, ``$HOME/.sevenbridges/credentials``, has a simple ``.ini`` file format, with
+the environment (the Seven Bridges Platform, or the CGC, or Cavatica) indicated in square brackets, as shown:
 
 ::
 
-    [sbpla]
-    api-url = https://api.sbgenomics.com/v2
-    auth-token = <TOKEN_HERE>
+    [default]
+    api_endpoint = https://api.sbgenomics.com/v2
+    auth_token = <TOKEN_HERE>
 
     [cgc]
-    api-url = https://cgc-api.sbgenomics.com/v2
-    auth-token = <TOKEN_HERE>
+    api_endpoint = https://cgc-api.sbgenomics.com/v2
+    auth_token = <TOKEN_HERE>
+    
+    [cavatica]
+    api_endpoint = https://cavatica-api.sbgenomics.com/v2
+    auth_token = <TOKEN_HERE>
 
 
 The :code:`Api` object is the central resource for querying, saving and
@@ -110,10 +124,73 @@ instantiated the configuration class, pass it to the API class constructor.
 
 .. code:: python
 
-    c = sbg.Config(profile='sbpla')
+    c = sbg.Config(profile='cgc')
     api = sbg.Api(config=c)
 
-   
+If not profile is set it will use the default profile.
+
+.. note:: if user creates the api object ``api=sbg.Api()`` and does not pass any information the library will first search whether the environment variables are set. If not it will check
+          if the configuration file is present and read the ``[default]`` profile. If that also fail it will raise an exception
+
+
+Advance Access Features
+^^^^^^^^^^^^^^^^^^^^^^^
+Advance access features are subject to a change. To enable them just pass
+the :code:`advance_access=True` flag when instantiating the library
+
+.. code:: python
+
+    api = sbg.Api(url='https://api.sbgenomics.com/v2', token='<TOKEN_HERE>', advance_access=True)
+
+.. note:: - Advance access features are subject to a change. No guarantee of any sort is given for AA API calls maintainability.
+
+If you fully understand the above mentioned limitation of Advance access features and are certain you want to use the features across your scripts, you can set this in the `$HOME/.sevenbridges/sevenbridges-python/config` configuration file.
+
+    .. code::
+
+        [mode]
+        advance_access=True
+
+
+Proxy configuration
+-------------------
+
+Proxy configuration can be supplied in three different ways.
+
+    - explicit initialization
+
+    .. code:: python
+
+     api = sb.Api(url='https://api.sbgenomics.com/v2', token='<TOKEN_HERE>',
+            proxies={'https_proxy':'host:port', 'http_proxy': 'host:port'})
+
+    - environment variables
+
+    .. code:: python
+
+        os.environ['HTTP_PROXY'] = 'host:port'
+        os.environ['HTTPS_PROXY'] = 'host:port'
+
+    - `$HOME/.sevenbridges/sevenbridges-python/config` configuration file
+
+    .. code::
+
+        [proxies]
+        https_proxy=host:port
+        http_proxy=host:port
+
+    - Explicit with config
+
+    .. code::
+
+        config = sb.Config(profile='my-profile',
+                           proxies={'https_proxy':'host:port', 'http_proxy': 'host:port'})
+        api = sb.Api(config=config)
+
+
+.. note:: Once you set the proxy, all calls including upload and download will use the proxy settings.
+
+
 Rate limit
 ----------
 
@@ -125,9 +202,41 @@ obtained using your :code:`Api` object, as follows.
 
 .. code:: python
 
-    api.limit, 
-    api.remaining, 
+    api.limit
+    api.remaining
     api.reset_time
+
+
+Error Handlers
+--------------
+
+Error handler is a callable that accepts the :code:`api` and :code:`response` objects and returns the response object.
+They are most useful when additional logic needs to be implemented based on request result.
+
+Example:
+
+.. code::
+
+    def error_handler(api, response):
+        # Do something with the response object
+        return response
+
+
+sevenbridges-python library comes bundled with several useful error handlers. The most used ones
+are :code:`maintenance_sleeper` and :code:`rate_limit_sleeper` which pause your code execution until the SevenBridges/CGC
+public API is in maintenance mode or when the rate limit is breached.
+
+
+Usage:
+
+.. code::
+
+    from sevenbridges.http.error_handlers import rate_limit_sleeper, maintenance_sleeper
+    api = sb.Api(url='https://api.sbgenomics.com/v2', token='<TOKEN_HERE>',
+            error_handlers=[rate_limit_sleeper, maintenance_sleeper])
+
+
+.. note:: Api object instantiated in this way with error handlers attached will be resilient to server maintenance and rate limiting.
 
 Managing users
 --------------
@@ -286,7 +395,8 @@ Project methods -- an introduction to methods in the sevenbridges-python library
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 There are two types of methods in the sevenbridges-python library: static
-and dynamic. Static methods are invoked on the :code:`Api` object instance. Dynamic methods are invoked from the instance of the object representing the resource (e.g. the project).
+and dynamic. Static methods are invoked on the :code:`Api` object instance.
+Dynamic methods are invoked from the instance of the object representing the resource (e.g. the project).
 
 Static methods include:
 
@@ -312,7 +422,7 @@ So, suppose that ``project`` is an instance of ``Project`` object. Then, we can:
    the object from the server.
 3. Save changes to the server: ``project.save()`` saves all properties
 
-The following example shows some of the methods used to manipulatate projects.
+The following example shows some of the methods used to manipulate projects.
 
 .. code:: python
 
@@ -334,12 +444,14 @@ Other project methods include:
    ``project.get_members()`` - returns a ``Collection`` of members and
    their permissions
 2. Add a member to the project - ``project.add_member()``
-3. Remove a member from the project - ``project.remove_member()``
-4. List files from the project - ``project.get_files()``
-5. Add files to the project - ``project.add_files`` - you can add a
+3. Add a team member to the project - ``project.add_member_team()``
+4. Add a division member to the project - ``project.add_member_division()``
+5. Remove a member from the project - ``project.remove_member()``
+6. List files from the project - ``project.get_files()``
+7. Add files to the project - ``project.add_files()`` - you can add a
    single ``File`` or a ``Collection`` of files
-6. List apps from the project - ``project.get_apps()``
-7. List tasks from the project - ``project.get_tasks``
+8. List apps from the project - ``project.get_apps()``
+9. List tasks from the project - ``project.get_tasks()``
 
 Manage billing
 --------------
@@ -432,7 +544,7 @@ Managing files
 --------------
 
 Files are an integral part of each analysis. As for as all other resources, the
-sevenbridges-python library enables you to efectively query files, in order to retreive each file's details and metadata. The request to get a file's information can be made in the
+sevenbridges-python library enables you to effectively query files, in order to retrieve each file's details and metadata. The request to get a file's information can be made in the
 same manner as for projects and billing, presented above. 
 
 The available methods for fetching specific files are ``query`` and ``get``:
@@ -468,7 +580,9 @@ Each file has the following properties:
 
 ``origin`` - File origin information, indicating the task that created the file.
 
-``metadata`` - File metadata
+``tags`` - File tags.
+
+``metadata`` - File metadata.
 
 File methods
 ~~~~~~~~~~~~
@@ -478,6 +592,8 @@ Files have the following methods:
 -  Copy the file from one project to another: ``copy()``
 -  Download the file: ``download()``
 -  Save modifications to the file to the server ``save()``
+-  Delete the resource: ``delete()``
+
 
 See the examples below for information on the arguments these methods take:
 
@@ -500,23 +616,322 @@ Examples
     my_file.metadata['sample_id'] = 'my-sample'
     my_file.metadata['library'] = 'my-library'
     
-    # Save modifications to a file
+
+    # Add metadata (if you are starting with a file without metadata)
+    my_file = my_files[0]
+    my_file.metadata = {'sample_id' : 'my-sample',
+                        'library' : 'my-library'
+                      }
+                      
+    # Also set a tag on that file
+    my_file.tags = ['example']
+   
+    # Save modifications
     my_file.save()
     
     # Copy a file between projects
     new_file = my_file.copy(project='user/my-other-project', name='my-new-file')
     
     # Download a file to the current working directory
-    new_file.download(wait=True)
+    # Optionally, path can contain a full path on local filesystem
+    new_file.download(path='my_new_file_on_disk')
 
+Managing file upload and download
+---------------------------------
+
+``sevenbridges-python`` library provides both synchronous and asynchronous
+way of uploading or downloading files.
+
+File Download
+~~~~~~~~~~~~~
+
+Synchronous file download:
+
+.. code:: python
+
+    file = api.files.get('file-identifier')
+    file.download('/home/bar/foo/file.bam')
+
+Asynchronous file download:
+
+.. code:: python
+
+    file = api.files.get('file-identifier')
+    download = file.download('/home/bar/foo.bam', wait=False)
+
+    download.path # Gets the target file path of the download.
+    download.status # Gets the status of the download.
+    download.progress # Gets the progress of the download as percentage.
+    download.start_time # Gets the start time of the download.
+    download.duration # Gets the download elapsed time.
+
+    download.start() # Starts the download.
+    download.pause() # Pauses the download.
+    download.resume() # Resumes the download.
+    download.stop() # Stops the download.
+    download.wait() # Block the main loop until download completes.
+
+You can register the callback or error callback function to the
+download handle: ``download.add_callback(callback=my_callback, errorback=my_error_back)``
+
+Registered callback method will be invoked on completion of the download. The errorback
+method will be invoked if error happens during download.
+
+File Upload
+~~~~~~~~~~~
+
+Synchronous file upload:
+
+.. code:: python
+
+    # Get the project where we want to upload files.
+    project = api.projects.get('project-identifier')
+    api.files.upload('/home/bar/foo/file.fastq', project)
+    # Optionally we can set file name of the uploaded file.
+    api.files.upload('/home/bar/foo/file.fastq', project, file_name='new.fastq')
+
+Asynchronous file upload:
+
+.. code:: python
+
+    upload = api.files.upload('/home/bar/foo/file.fastq', 'project-identifier', wait=False)
+
+    upload.file_name # Gets the file name of the upload.
+    upload.status # Gets the status of the upload.
+    upload.progress # Gets the progress of the upload as percentage.
+    upload.start_time # Gets the start time of the upload.
+    upload.duration # Gets the upload elapsed time.
+
+    upload.start() # Starts the upload.
+    upload.pause() # Pauses the upload.
+    upload.resume() # Resumes the upload.
+    upload.stop() # Stops the upload.
+    upload.wait() # Block the main loop until upload completes.
+
+You can register the callback or error callback in the same manner as it
+was described for asynchronous file download.
+
+
+Managing volumes: connecting cloud storage to the Platform
+----------------------------------------------------------
+
+Volumes authorize the Platform to access and query objects on a specified cloud storage (Amazon Web Services or Google Cloud Storage) on your behalf. As for as all other resources, the sevenbridges-python library enables you to effectively query volumes, import files from a volume to a project or export files from a project to the volume. 
+
+The available methods for listing volumes, imports and exports are ``query`` and ``get``, as for other objects:
+
+.. code:: python
+
+    # Query all volumes 
+    volume_list = api.volumes.query()
+    # Query all imports
+    all_imports = api.imports.query()
+    # Query failed exports
+    failed_exports = api.exports.query(state='FAILED')
+
+.. code:: python
+
+    # Get a single volume's information
+    volume = api.volumes.get(id='user/volume')
+    # Get a single import's information
+    i = api.imports.get(id='08M4ywDZkQuJOb3L5M8mMSvzoeGezTdh')
+    # Get a single export's information
+    e = api.exports.get(id='0C7T8sBDP6aiNbwvXv12QZFPW55wJ3GJ')
+
+
+Volume properties
+~~~~~~~~~~~~~~~~~
+
+Each volume has the following properties:
+
+``href`` - Volume href on the API server.
+
+``id`` - Volume identifier in format owner/name.
+
+``name`` - Volume name. Learn more about this in our `Knowledge Center <http://docs.sevenbridges.com/docs/volumes#section-volume-name>`_.
+
+``access_mode`` - Whether the volume was created as read-only (RO) or read-write (RW). Learn more about this in our `Knowledge Center <http://docs.sevenbridges.com/docs/volumes#section-access-mode>`_.
+
+``active`` - Whether or not this volume is active.
+
+``created_on`` - Time when the volume was created.
+
+``modified_on`` - Time when the volume was last modified.
+
+``description`` - An optional description of this volume.
+
+``service`` - This object contains the information about the cloud service that this volume represents.
+
+Volume methods
+~~~~~~~~~~~~~~
+
+Volumes have the following methods:
+
+-  Refresh the volume with data from the server: ``reload()``
+-  Get imports for a particular volume ``get_imports()``
+-  Get exports for a particular volume ``get_exports()``
+-  Create a new volume based on the AWS S3 service -  ``create_s3_volume()``
+-  Create a new volume based on Google Cloud Storage service  - ``create_google_volume()``
+-  Save modifications to the volume to the server ``save()``
+-  Unlink the volume ``delete()``
+-  Get volume members ``get_members()``
+-  Add a member to the project - ``add_member()``
+-  Add a team member to the project - ``add_member_team()``
+-  Add a division member to the project - ``add_member_division()``
+
+
+See the examples below for information on the arguments these methods take:
+
+Examples
+~~~~~~~~
+
+.. code:: python
+
+    # Create a new volume based on AWS S3 for importing files
+    volume_import = api.volumes.create_s3_volume(name='my_input_volume', bucket='my_bucket',access_key_id='AKIAIOSFODNN7EXAMPLE',secret_access_key = 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',access_mode='RO')
+
+    # Create a new volume based on AWS S3 for exporting files
+    volume_export = api.volumes.create_s3_volume(name='my_output_volume', bucket='my_bucket', access_key_id='AKIAIOSFODNN7EXAMPLE',secret_access_key = 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',access_mode='RW')
+    # List all volumes available
+    volumes = api.volumes.query()
+     
+
+Import properties
+~~~~~~~~~~~~~~~~~
+
+When you import a file from a volume into a project on the Platform,  you are importing a file from your cloud storage provider (Amazon Web Services or Google Cloud Storage) via the volume onto the Platform.
+
+If successful, an alias will be created on the Platform. Aliases appear as files on the Platform and can be copied, executed, and modified as such. They refer back to the respective file on the given volume.
+
+Each import has the following properties:
+
+``href`` - Import href on the API server.
+
+``id`` - Import identifier.
+
+``source`` - Source of the import, object of type ``VolumeFile``, contains info on volume and file location on the volume
+
+``destination`` - Destination of the import, object of type ``ImportDestination``, containing info on project where the file was imported to and name of the file in the project
+
+``state`` - State of the import. Can be *PENDING*, *RUNNING*, *COMPLETED* and *FAILED*.
+
+``result`` - If the import was completed, contains the result of the import - a ``File`` object.
+
+``error`` - Contains the ``Error`` object if the import failed.
+
+``overwrite`` - Whether the import was set to overwrite file at destination or not.
+
+``started_on`` - Contains the date and time when the import was started.
+
+``finished_on`` - Contains the date and time when the import was finished.
+
+Import methods
+~~~~~~~~~~~~~~
+
+Imports have the following methods:
+
+-  Refresh the import with data from the server: ``reload()``
+-  Start an import  by specifying the source and the destination of the import - ``submit_import()``
+-  Delete the import -  ``delete()``
+
+See the examples below for information on the arguments these methods take:
+
+Examples
+~~~~~~~~
+
+.. code:: python
+
+    # Import a  file to a project
+    my_project = api.projects.get(id='my_project')
+    bucket_location = 'fastq/my_file.fastq'
+    imp = api.imports.submit_import(volume=volume_import, project=my_project, location=bucket_location)
+    # Wait until the import finishes
+    while True:
+          import_status = imp.reload().state
+          if import_status in (ImportExportState.COMPLETED, ImportExportState.FAILED):
+               break
+          time.sleep(10)
+    # Continue with the import
+    if imp.state == ImportExportState.COMPLETED:
+          imported_file = imp.result
+
+
+Export properties
+~~~~~~~~~~~~~~~~~
+
+When you export a file from a project on the Platform into a volume, you are essentially writing to your cloud storage bucket on Amazon Web Services or Google Cloud Storage via the volume.
+
+Note that the file selected for export must not be a public file or an alias. Aliases are objects stored in your cloud storage bucket which have been made available on the Platform.
+
+The volume you are exporting to must be configured for read-write access. To do this, set the ``access_mode`` parameter to ``RW`` when creating or modifying a volume. Learn more about this from our `Knowledge Center <http://docs.sevenbridges.com/docs/volumes#section-access-mode>`_.
+
+Each export has the following properties:
+
+``href`` - Export href on the API server.
+
+``id`` - Export identifier.
+
+``source`` - Source of the export, object of type ``File``
+
+``destination`` - Destination of the export, object of type ``VolumeFile``, containing info on project where the file was imported to and name of the file in the project
+
+``state`` - State of the export. Can be *PENDING*, *RUNNING*, *COMPLETED* and *FAILED*.
+
+``result`` - If the export was completed, this contains the result of the import - a ``File`` object.
+
+``error`` - Contains the ``Error`` object if the export failed.
+
+``overwrite`` - Whether or not the export was set to overwrite the file at the destination.
+
+``started_on`` - Contains the date and time when the export  was started.
+
+``finished_on`` - Contains the date and time when the export was finished.
+
+Export methods
+~~~~~~~~~~~~~~
+
+Exports have the following methods:
+
+-  Refresh the export with data from the server: ``reload()``
+-  Submit export, by specifying source and destination of the import: ``submit_import()``
+-  Delete the export: ``delete()``
+
+See the examples below for information on the arguments these methods take:
+
+
+Examples
+~~~~~~~~
+
+.. code:: python
+
+    # Export a set of files to a volume
+    # Get files from a project
+    files_to_export = api.files.query(project=my_project).all()
+    # And export all the files to the output bucket
+    exports = []
+    for f in files_to_export:
+          export = api.exports.submit_export(file=f, volume = volume_export, location=f.name)
+          exports.append(export)
+    # Wait for exports to finish:
+    num_exports = len(exports)
+    done = False
+    
+    while not done:
+          done_len = 0 
+          for e in exports:
+                 if e.reload().state in (ImportExportState.COMPLETED, ImportExportState.FAILED):
+                        done_len += 1
+                 time.sleep(10)
+          if done_len == num_exports:
+                 done = True
+    
 Managing apps
 -------------
 
-Managing apps (tools and workfows) with the sevenbridges-python library is simple. Apps on the Seven
+Managing apps (tools and workflows) with the sevenbridges-python library is simple. Apps on the Seven
 Bridges Platform and CGC are implemented using the Common Workflow Language (CWL)
 specification
 https://github.com/common-workflow-language/common-workflow-language.
-The sevenbridges-python currenty supports only Draft 2 format of the
+The sevenbridges-python currently supports only Draft 2 format of the
 CWL.
 Each app has a CWL description, expressed in JSON.
 
@@ -525,8 +940,10 @@ way as for other resources, using the ``query()`` and ``get`` methods. You
 can also invoke the following class-specific methods:
 
 -  ``get_revision()`` - Returns a specific app revision.
--  ``install_app()`` - Installs your app on the server, using its CWL desription.
+-  ``install_app()`` - Installs your app on the server, using its CWL description.
 -  ``create_revision()`` - Creates a new revision of the specified app.
+
+.. note:: Listing public apps can be achieved by invoking ``api.apps.query(visibility='public')``
 
 App properties
 ~~~~~~~~~~~~~~
@@ -548,8 +965,7 @@ Each app has the following available properties:
 App methods
 ~~~~~~~~~~~
 
-Currently there is only one instance method for apps: ``save()`` which
-saves changes to the app on the server.
+- App only has class methods that were mentioned above.
 
 Managing tasks
 --------------
@@ -598,7 +1014,7 @@ the ``batch_by`` criteria.
 
 ``price`` - Task cost.
 
-``inputs`` - Inputs that were subbmited to the task.
+``inputs`` - Inputs that were submitted to the task.
 
 ``outputs`` - Generated outputs from the task.
 
@@ -621,9 +1037,15 @@ The following class and instance methods are available for tasks:
 -  Refresh the task object information with the date from the server:
    ``refresh()``.
 -  Save task modifications to the sever: ``save()``.
--  Get task exection datails: ``get_execution_details()``.
+-  Get task execution details: ``get_execution_details()``.
 -  Get batch children if the task is a batch task:
    ``get_batch_children()``.
+
+Task creation hints
+~~~~~~~~~~~~~~~~~~~
+
+- Both input files and parameters are passed the same way together in a single dictionary to ``inputs``.
+- ``api.files.query`` always return an array of files. For single file inputs, use ``api.files.query(project='my-project', names=["one_file.fa"])[0]``.
 
 
 Task Examples
@@ -635,10 +1057,10 @@ Single task
 .. code:: python
 
     # Task name
-    task_name = 'my-first-task'
+    name = 'my-first-task'
     
     # Project in which I want to run a task.
-    project_id = 'my-username/my-project'
+    project = 'my-username/my-project'
     
     # App I want to use to run a task
     app = 'my-username/my-project/my-app'
@@ -661,20 +1083,20 @@ Batch task
 .. code:: python
 
     # Task name
-    task_name = 'my-first-task'
+    name = 'my-first-task'
     
     # Project in which to run the task.
-    project_id = 'my-username/my-project'
+    project = 'my-username/my-project'
     
     # App to use to run the task
     app = 'my-username/my-project/my-app'
     
     # Inputs
     inputs = {}
-    inputs['FastQC-Reads'] = api.files.query(project='my-project', metadata={'sample': 'some-sample'})
+    inputs['FastQC-Reads'] = api.files.query(project=project, metadata={'sample': 'some-sample'})
     
     # Specify that one task should be created per file (i.e. batch tasks by file).
-    bach_by = {'type': 'item'}
+    batch_by = {'type': 'item'}
     
     
     # Specify that the batch input is FastQC-Reads
@@ -682,6 +1104,6 @@ Batch task
     
     try:
         task = api.tasks.create(name=name, project=project, app=app, 
-                                inputs=inputs, batch_input=batch_input, batch_by=batch_by run=True)
+                                inputs=inputs, batch_input=batch_input, batch_by=batch_by, run=True)
     except SbError:
         print('I was unable to run a batch task.')

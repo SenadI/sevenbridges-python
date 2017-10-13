@@ -1,8 +1,11 @@
+import logging
 import six
 
 from sevenbridges.meta.resource import Resource
 from sevenbridges.meta.fields import HrefField, StringField
 from sevenbridges.meta.transformer import Transform
+
+logger = logging.getLogger(__name__)
 
 
 class User(Resource):
@@ -28,7 +31,10 @@ class User(Resource):
     city = StringField(read_only=True)
 
     def __eq__(self, other):
-        return self.username == other.username
+        if self is other:
+            return True
+        else:
+            return self.username == other.username
 
     def __str__(self):
         return six.text_type(
@@ -43,6 +49,11 @@ class User(Resource):
         :return: User object.
         """
         api = api if api else cls._API
+        extra = {
+            'resource': cls.__name__,
+            'query': {}
+        }
+        logger.info('Fetching user information', extra=extra)
         user_data = api.get(cls._URL['me']).json()
         return User(api=api, **user_data)
 
